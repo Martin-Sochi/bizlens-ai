@@ -1,7 +1,4 @@
 
-export default function handler(req, res) {
-    res.status(200).json({
-        status: "ok",
-        message: "BizLens AI API function is running"
-    });
-}
+import app from "../server/index.js";
+
+export default app;
