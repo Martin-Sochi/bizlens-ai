@@ -1,5 +1,15 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Environment variables and secrets
 .env
 .env.*
+**/.env
+**/.env.*
+
+# Allow safe example templates
 !.env.example
+!**/.env.example
