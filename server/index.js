@@ -436,7 +436,12 @@ app.post("/api/ai-recommendations", async (req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`BizLens AI backend listening on port ${PORT}`);
-  console.log(`Groq configured: ${Boolean(ai)}`);
-});
+
+export default app;
+
+if (process.env.VERCEL !== "1") {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`BizLens AI backend listening on port ${PORT}`);
+    console.log(`Groq configured: ${Boolean(ai)}`);
+  });
+}

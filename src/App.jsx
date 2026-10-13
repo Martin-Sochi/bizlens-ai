@@ -384,7 +384,7 @@ useEffect(() => {
 
     try {
       const response = await fetch(
-        "http://localhost:3001/api/ai-recommendations",
+        "/api/ai-recommendations",
         {
           method: "POST",
           headers: {
