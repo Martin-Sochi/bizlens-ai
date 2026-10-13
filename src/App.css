@@ -1583,3 +1583,185 @@ p {
     animation-duration: 0.01ms !important;
   }
 }
+
+transaction-form{
+  display:flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.transaction-form label{
+  display: flex;
+  flex-direction: column;
+  gap:0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+
+/* Inputs, Selects, and Textareas */
+.transaction-form input,
+.transaction-form select {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: #1f2937;
+  background-color: #f9fafb;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+/* Focus State */
+.transaction-form input:focus,
+.transaction-form select:focus {
+  border-color: #2563eb; /* Clean blue */
+  background-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+/* Two Column Grid for inputs/selects */
+.form-two-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .form-two-columns {
+    grid-template-columns: 1fr; /* Stack vertically on small screens */
+  }
+}
+
+/* Informational Note Box */
+.form-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background-color: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 0.5rem;
+  color: #0b2b93;
+  font-size: 0.8125rem;
+}
+
+/* Modal Action Buttons Footer */
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* Button Base Styles */
+.modal-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.2s;
+}
+
+/* Secondary Button (Cancel) */
+.button-secondary {
+  background-color: #f3f4f6;
+  color: #4b5563;
+}
+
+.button-secondary:hover {
+  background-color: #e5e7eb;
+}
+
+/* Primary Button (Save) */
+.button-primary {
+  background-color: #154dc7;
+  color: #ffffff;
+}
+
+.button-primary:hover {
+  background-color: #1d4ed8;
+}
+
+/* Icon button (Close X button) */
+.icon-button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 0.4rem;
+  border-radius: 0.375rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.icon-button:hover {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+/* Consistent padding for dashboard cards and panels */
+.panel,
+.metric-card,
+.card {
+  padding: 1.25rem;
+  box-sizing: border-box;
+}
+
+/* Keep card content from overflowing */
+.panel *,
+.metric-card *,
+.card * {
+  box-sizing: border-box;
+}
+
+/* Slightly reduce padding on mobile */
+@media (max-width: 640px) {
+  .panel,
+  .metric-card,
+  .card {
+    padding: 1rem;
+  }
+}
+
+
+/* Padding for Import CSV, Export CSV, and Add buttons */
+.welcome-actions .upload-button,
+.welcome-actions .compact-button,
+.welcome-actions .button-primary {
+  padding: 10px 18px;
+  box-sizing: border-box;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Keep the Import CSV label clickable and properly aligned */
+.welcome-actions .upload-button {
+  cursor: pointer;
+}
+
+/* Responsive button padding */
+@media (max-width: 640px) {
+  .welcome-actions .upload-button,
+  .welcome-actions .compact-button,
+  .welcome-actions .button-primary {
+    padding: 9px 12px;
+  }
+}

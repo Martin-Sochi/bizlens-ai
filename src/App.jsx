@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import { analyzeFinancials } from "./financialInsights";
 
+
 import {
   LayoutDashboard,
   ChartNoAxesCombined,
@@ -48,6 +49,48 @@ import {
 import "./App.css";
 
 const STORAGE_KEY = "bizlens-transactions-v1";
+
+function filterTransactionsByPeriod(transactions, period, now = new Date()) {
+  if (period === "All time") {
+    return transactions;
+  }
+
+  const cutoff = new Date(now);
+  cutoff.setHours(0, 0, 0, 0);
+
+  switch (period) {
+    case "Last 7 days":
+      cutoff.setDate(cutoff.getDate() - 6);
+      break;
+
+    case "Last 30 days":
+      cutoff.setDate(cutoff.getDate() - 29);
+      break;
+
+    case "3 months":
+      cutoff.setMonth(cutoff.getMonth() - 3);
+      break;
+
+    case "6 months":
+      cutoff.setMonth(cutoff.getMonth() - 6);
+      break;
+
+    default:
+      return transactions;
+  }
+
+  return transactions.filter((transaction) => {
+    if (!transaction.date) return false;
+
+    const transactionDate = new Date(`${transaction.date}T00:00:00`);
+
+    if (Number.isNaN(transactionDate.getTime())) {
+      return false;
+    }
+
+    return transactionDate >= cutoff && transactionDate <= now;
+  });
+}
 
 const initialTransactions = [
   {
@@ -226,6 +269,11 @@ function App() {
   const [transactions, setTransactions] = useState(loadTransactions);
   const [showTransactionForm, setShowTransactionForm] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [aiRecommendations, setAiRecommendations] = useState([]);
+const [aiRecommendationsKey, setAiRecommendationsKey] = useState("");
+const [aiLoading, setAiLoading] = useState(false);
+const [aiError, setAiError] = useState("");
+const [aiSource, setAiSource] = useState("");
 
   const [form, setForm] = useState({
     description: "",
@@ -289,14 +337,16 @@ function App() {
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [transactions, searchTerm]);
 
-
+const filteredPeriodTransactions = useMemo(() => {
+  return filterTransactionsByPeriod(transactions, period);
+}, [transactions, period]);
     
 const financials = useMemo(() => {
-  const income = transactions
+  const income = filteredPeriodTransactions
     .filter((transaction) => transaction.type === "income")
     .reduce((total, transaction) => total + transaction.amount, 0);
 
-  const expenses = transactions
+  const expenses = filteredPeriodTransactions
     .filter((transaction) => transaction.type === "expense")
     .reduce((total, transaction) => total + transaction.amount, 0);
 
@@ -308,15 +358,94 @@ const financials = useMemo(() => {
     expenses,
     profit,
     margin,
-    transactionCount: transactions.length,
+    transactionCount: filteredPeriodTransactions.length,
   };
-}, [transactions]);
+}, [filteredPeriodTransactions]);
 
 const analysis = useMemo(
-  () => analyzeFinancials(transactions),
-  [transactions]
+  () => analyzeFinancials(filteredPeriodTransactions),
+  [filteredPeriodTransactions]
 );
 
+useEffect(() => {
+  let cancelled = false;
+  const controller = new AbortController();
+
+  async function fetchRecommendations() {
+    setAiLoading(true);
+    setAiError("");
+
+    try {
+      const response = await fetch(
+        "http://localhost:3001/api/ai-recommendations",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            financialSummary: {
+              revenue: analysis.revenue,
+              expenses: analysis.expenses,
+              profit: analysis.profit,
+              profitMargin: analysis.profitMargin,
+            },
+            expenseCategories: (analysis.expenseCategories || []).map(
+              (item) => ({
+                name: item.category,
+                amount: item.amount,
+              })
+            ),
+            reportingPeriod: period,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Unable to generate recommendations."
+        );
+      }
+
+      if (!Array.isArray(data.recommendations)) {
+        throw new Error("The server returned an invalid response.");
+      }
+
+      if (!cancelled) {
+        setAiRecommendations(data.recommendations);
+        setAiSource(data.source || "groq");
+      }
+    } catch (error) {
+      if (!cancelled && error.name !== "AbortError") {
+        setAiError(
+          error.message ||
+            "Could not connect to Groq. Check that the backend is running."
+        );
+      }
+    } finally {
+      if (!cancelled) {
+        setAiLoading(false);
+      }
+    }
+  }
+
+  fetchRecommendations();
+
+  return () => {
+    cancelled = true;
+    controller.abort();
+  };
+}, [
+  analysis.revenue,
+  analysis.expenses,
+  analysis.profit,
+  analysis.profitMargin,
+  analysis.expenseCategories,
+  period,
+]);
 
 
   const expenseData = useMemo(() => {
@@ -342,41 +471,42 @@ const analysis = useMemo(
       .sort((a, b) => b.value - a.value);
   }, [transactions]);
 
-  const salesData = useMemo(() => {
-    const months = [];
+  
+const salesData = useMemo(() => {
+  const now = new Date();
+  const chartData = [];
 
-    const current = new Date();
-    current.setDate(1);
+  if (period === "Last 7 days" || period === "Last 30 days") {
+    const numberOfDays = period === "Last 7 days" ? 7 : 30;
 
-    for (let i = 5; i >= 0; i--) {
-      const monthDate = new Date(
-        current.getFullYear(),
-        current.getMonth() - i,
-        1
+    const startDate = new Date(now);
+    startDate.setHours(0, 0, 0, 0);
+    startDate.setDate(startDate.getDate() - (numberOfDays - 1));
+
+    for (let i = 0; i < numberOfDays; i++) {
+      const day = new Date(startDate);
+      day.setDate(startDate.getDate() + i);
+
+      const year = day.getFullYear();
+      const month = String(day.getMonth() + 1).padStart(2, "0");
+      const date = String(day.getDate()).padStart(2, "0");
+      const key = `${year}-${month}-${date}`;
+
+      const dayTransactions = filteredPeriodTransactions.filter(
+        (transaction) => transaction.date === key
       );
 
-      const year = monthDate.getFullYear();
-      const month = String(monthDate.getMonth() + 1).padStart(2, "0");
-      const key = `${year}-${month}`;
-
-      const revenue = transactions
-        .filter(
-          (transaction) =>
-            transaction.type === "income" &&
-            transaction.date.startsWith(key)
-        )
+      const revenue = dayTransactions
+        .filter((transaction) => transaction.type === "income")
         .reduce((total, transaction) => total + transaction.amount, 0);
 
-      const expenses = transactions
-        .filter(
-          (transaction) =>
-            transaction.type === "expense" &&
-            transaction.date.startsWith(key)
-        )
+      const expenses = dayTransactions
+        .filter((transaction) => transaction.type === "expense")
         .reduce((total, transaction) => total + transaction.amount, 0);
 
-      months.push({
-        month: monthDate.toLocaleDateString("en-NG", {
+      chartData.push({
+        month: day.toLocaleDateString("en-NG", {
+          day: "numeric",
           month: "short",
         }),
         revenue,
@@ -384,8 +514,89 @@ const analysis = useMemo(
       });
     }
 
-    return months;
-  }, [transactions]);
+    return chartData;
+  }
+
+  const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  let numberOfMonths;
+
+  if (period === "3 months") {
+    numberOfMonths = 3;
+  } else if (period === "6 months") {
+    numberOfMonths = 6;
+  } else {
+    const datedTransactions = transactions
+      .filter((transaction) => transaction.date)
+      .map((transaction) => new Date(`${transaction.date}T00:00:00`))
+      .filter((date) => !Number.isNaN(date.getTime()));
+
+    if (datedTransactions.length === 0) {
+      numberOfMonths = 6;
+    } else {
+      const earliestDate = new Date(
+        Math.min(...datedTransactions.map((date) => date.getTime()))
+      );
+
+      numberOfMonths =
+        (now.getFullYear() - earliestDate.getFullYear()) * 12 +
+        now.getMonth() -
+        earliestDate.getMonth() +
+        1;
+    }
+  }
+
+  // Avoid an excessively large chart if the dataset spans many years.
+  // All-time financial totals still include every transaction.
+  const chartStartDate = new Date(
+    startDate.getFullYear(),
+    startDate.getMonth() - numberOfMonths + 1,
+    1
+  );
+
+  const monthsToDisplay = [];
+
+  for (
+    let date = new Date(chartStartDate);
+    date <= startDate;
+    date.setMonth(date.getMonth() + 1)
+  ) {
+    monthsToDisplay.push(new Date(date));
+  }
+
+  monthsToDisplay.forEach((monthDate) => {
+    const year = monthDate.getFullYear();
+    const month = String(monthDate.getMonth() + 1).padStart(2, "0");
+    const key = `${year}-${month}`;
+
+    const monthTransactions = filteredPeriodTransactions.filter(
+      (transaction) =>
+        typeof transaction.date === "string" &&
+        transaction.date.startsWith(key)
+    );
+
+    const revenue = monthTransactions
+      .filter((transaction) => transaction.type === "income")
+      .reduce((total, transaction) => total + transaction.amount, 0);
+
+    const expenses = monthTransactions
+      .filter((transaction) => transaction.type === "expense")
+      .reduce((total, transaction) => total + transaction.amount, 0);
+
+    chartData.push({
+      month: monthDate.toLocaleDateString("en-NG", {
+        month: "short",
+        year: "2-digit",
+      }),
+      revenue,
+      expenses,
+    });
+  });
+
+  return chartData;
+}, [filteredPeriodTransactions, transactions, period]);
+
+
 
   const navigateTo = (page) => {
     setActivePage(page);
@@ -400,6 +611,23 @@ const analysis = useMemo(
       [name]: value,
     }));
   };
+
+  
+const handleTypeChange = (event) => {
+  const type = event.target.value;
+
+  setForm((previous) => ({
+    ...previous,
+    type,
+    category:
+      type === "income"
+        ? "Sales"
+        : previous.type === "income"
+          ? "Other"
+          : previous.category,
+  }));
+};
+
 
   const handleAddTransaction = (event) => {
     event.preventDefault();
@@ -850,6 +1078,10 @@ const analysis = useMemo(
               financials={financials}
               analysis={analysis}
               transactions={transactions}
+              aiRecommendations={aiRecommendations}
+              aiLoading={aiLoading}
+              aiError={aiError}
+              aiSource={aiSource}
               onAdd={() => setShowTransactionForm(true)}
               onUpload={handleCSVUpload}
               csvInputKey={csvInputKey}
@@ -862,6 +1094,7 @@ const analysis = useMemo(
             <TransactionModal
               form={form}
               onChange={updateForm}
+              onTypeChange={handleTypeChange}
               onSubmit={handleAddTransaction}
               onClose={() => setShowTransactionForm(false)}
             />
@@ -881,7 +1114,13 @@ const analysis = useMemo(
   );
 }
 
-function TransactionModal({ form, onChange, onSubmit, onClose }) {
+function TransactionModal({
+  form,
+  onChange,
+  onTypeChange,
+  onSubmit,
+  onClose,
+}) {
   return (
     <div
       className="modal-backdrop"
@@ -940,7 +1179,7 @@ function TransactionModal({ form, onChange, onSubmit, onClose }) {
               <select
                 name="type"
                 value={form.type}
-                onChange={onChange}
+                onChange={onTypeChange}
               >
                 <option value="income">Income</option>
                 <option value="expense">Expense</option>
@@ -1157,15 +1396,21 @@ function Overview({
               <p>Track recorded revenue and expenses over time</p>
             </div>
 
+            
             <select
               className="period-select"
               value={period}
               onChange={(event) => setPeriod(event.target.value)}
-              aria-label="Chart time period"
+              aria-label="Financial reporting period"
             >
-              <option>6 months</option>
-              <option>3 months</option>
+              <option value="Last 7 days">Last 7 days</option>
+              <option value="Last 30 days">Last 30 days</option>
+              <option value="3 months">3 months</option>
+              <option value="6 months">6 months</option>
+              <option value="All time">All time</option>
             </select>
+
+
           </div>
 
           <div className="chart-legend">
@@ -1182,9 +1427,7 @@ function Overview({
           <div className="revenue-chart">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
-                data={
-                  period === "3 months" ? salesData.slice(-3) : salesData
-                }
+                data={salesData}
                 margin={{ top: 10, right: 8, left: -12, bottom: 0 }}
               >
                 <defs>
@@ -1431,8 +1674,7 @@ function Overview({
         
         <div className="ai-disclaimer">
           <Sparkles size={14} />
-          These insights are generated using financial rules applied to your
-          recorded transactions. AI-generated advice is not connected yet.
+          These insights are generated locally from your recorded transactions using financial analysis rules.
         </div>
       </section>
 
@@ -1640,6 +1882,10 @@ function TransactionsTable({ transactions: rows, onDelete }) {
 function SecondaryPage({
   page,
   onNavigate,
+  aiRecommendations,
+  aiLoading,
+  aiError,
+  aiSource,
   onExport,
   onExportSample,
   filteredTransactions,
@@ -1654,8 +1900,17 @@ function SecondaryPage({
   onClear,
 }) {
   const isTransactions = page === "Transactions";
+  const isFinancialInsights = page === "Financial insights";
   const isInsights = page === "AI recommendations";
   const isSettings = page === "Settings";
+
+  const recommendationsToShow =
+  aiRecommendations.length > 0
+    ? aiRecommendations
+    : analysis.recommendations;
+
+const usingAI =
+  aiRecommendations.length > 0 && aiSource === "groq";
 
   return (
     <section className="secondary-page">
@@ -1669,13 +1924,16 @@ function SecondaryPage({
       <p className="welcome-description">
         {isTransactions
           ? "Review, add, import and export your business records."
-          : isInsights
-            ? "Explore observations calculated from your current financial records."
-            : isSettings
-              ? "Manage your demo workspace and local data."
-              : "Understand your financial performance and explore opportunities."}
+          : isFinancialInsights
+            ? "Understand your revenue, expenses, profit, and monthly financial performance."
+            : isInsights
+              ? "Discover practical actions that could help improve your business finances."
+              : isSettings
+                ? "Manage your demo workspace and local data."
+                : "Understand your financial performance and explore opportunities."}
       </p>
 
+      {/* TRANSACTIONS PAGE */}
       {isTransactions ? (
         <>
           <section className="metrics-grid secondary-metrics">
@@ -1721,6 +1979,7 @@ function SecondaryPage({
                 <label className="button-secondary upload-button">
                   <Upload size={15} />
                   Import CSV
+
                   <input
                     key={csvInputKey}
                     type="file"
@@ -1752,7 +2011,10 @@ function SecondaryPage({
             />
           </section>
         </>
-      ) : isInsights ? (
+      ) : null}
+
+      {/* FINANCIAL INSIGHTS PAGE */}
+      {isFinancialInsights && (
         <>
           <section className="metrics-grid secondary-metrics">
             <MetricCard
@@ -1791,156 +2053,265 @@ function SecondaryPage({
             />
           </section>
 
+          
+          {/* MONTHLY PERFORMANCE COMPARISON */}
           <section className="panel secondary-panel">
-  <div className="panel-heading">
-        <div>
-          <h2>Monthly Performance Comparison</h2>
-          <p>
-            Compare recorded financial performance across months.
-          </p>
-        </div>
-          
-          
-    <ChartNoAxesCombined size={21} />
-          
-          
-      </div>
-          
-    {analysis.latestMonth && analysis.previousMonth ? (
-    <> <div className="table-scroll"> <table className="transactions-table"> <thead> <tr> <th>Metric</th> <th>{analysis.previousMonth.label}</th> <th>{analysis.latestMonth.label}</th> <th>Change</th> </tr> </thead>
-    
-    
-          <tbody>
-            {[
-              {
-                label: "Revenue",
-                previous: analysis.previousMonth.revenue,
-                current: analysis.latestMonth.revenue,
-                change: analysis.revenueChange,
-                inverse: false,
-              },
-              {
-                label: "Expenses",
-                previous: analysis.previousMonth.expenses,
-                current: analysis.latestMonth.expenses,
-                change: analysis.expenseChange,
-                inverse: true,
-              },
-              {
-                label: "Profit",
-                previous: analysis.previousMonth.profit,
-                current: analysis.latestMonth.profit,
-                change: analysis.profitChange,
-                inverse: false,
-              },
-            ].map((metric) => {
-              const change = metric.change;
-            
-              const changeClass =
-                change === null || change === 0
-                  ? ""
-                  : (change > 0) !== metric.inverse
-                    ? "positive-change"
-                    : "negative-change";
-            
-              return (
-                <tr key={metric.label}>
-                  <td>
-                    <strong>{metric.label}</strong>
-                  </td>
-              
-                  <td>{formatMoney(metric.previous)}</td>
-              
-                  <td>{formatMoney(metric.current)}</td>
-              
-                  <td>
-                    <span className={changeClass}>
-                      {change === null
-                        ? metric.previous === 0 && metric.current === 0
-                          ? "0.0%"
-                          : "N/A"
-                        : `${change > 0 ? "+" : ""}${change.toFixed(1)}%`}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-          
-      <div className="ai-disclaimer">
-        <Sparkles size={14} />
-        Comparisons use the two most recent months containing transactions.
-        Percentage changes are marked N/A when the previous month's value
-        is zero and a meaningful percentage cannot be calculated.
-      </div>
-    </>
-    
-          
-    ) : ( <div className="empty-state"> <CalendarDays size={25} /> <strong>Not enough monthly data yet</strong> <span>
-    Add or import transactions dated in another month to compare revenue,
-    expenses, and profit across months. </span> </div>
-    )}
-    
-    </section>
+            <div className="panel-heading">
+              <div>
+                <h2>Monthly Performance Comparison</h2>
+                <p>
+                  Compare recorded financial performance across months.
+                </p>
+              </div>
 
-      
+              <ChartNoAxesCombined size={21} />
+            </div>
+
+            {analysis.latestMonth && analysis.previousMonth ? (
+              <>
+                <div className="table-scroll">
+                  <table className="transactions-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>{analysis.previousMonth.label}</th>
+                        <th>{analysis.latestMonth.label}</th>
+                        <th>Change</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {[
+                        {
+                          label: "Revenue",
+                          previous: analysis.previousMonth.revenue,
+                          current: analysis.latestMonth.revenue,
+                          change: analysis.revenueChange,
+                          inverse: false,
+                        },
+                        {
+                          label: "Expenses",
+                          previous: analysis.previousMonth.expenses,
+                          current: analysis.latestMonth.expenses,
+                          change: analysis.expenseChange,
+                          inverse: true,
+                        },
+                        {
+                          label: "Profit",
+                          previous: analysis.previousMonth.profit,
+                          current: analysis.latestMonth.profit,
+                          change: analysis.profitChange,
+                          inverse: false,
+                        },
+                      ].map((metric) => {
+                        const change = metric.change;
+
+                        const changeClass =
+                          change === null || change === 0
+                            ? ""
+                            : (change > 0) !== metric.inverse
+                              ? "positive-change"
+                              : "negative-change";
+
+                        return (
+                          <tr key={metric.label}>
+                            <td>
+                              <strong>{metric.label}</strong>
+                            </td>
+
+                            <td>{formatMoney(metric.previous)}</td>
+                            <td>{formatMoney(metric.current)}</td>
+
+                            <td>
+                              <span className={changeClass}>
+                                {change === null
+                                  ? metric.previous === 0 &&
+                                    metric.current === 0
+                                    ? "0.0%"
+                                    : "N/A"
+                                  : `${change > 0 ? "+" : ""}${change.toFixed(1)}%`}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="ai-disclaimer">
+                  <Sparkles size={14} />
+                  Comparing the two most recent months with recorded
+                  transactions. A percentage change is shown as N/A when
+                  the previous month's value is zero and a meaningful
+                  percentage cannot be calculated.
+                </div>
+              </>
+            ) : analysis.latestMonth ? (
+              <>
+                <div className="metrics-grid secondary-metrics">
+                  <MetricCard
+                    title="Monthly revenue"
+                    amount={analysis.latestMonth.revenue}
+                    icon={Banknote}
+                    tone="blue"
+                    description={analysis.latestMonth.label}
+                  />
+
+                  <MetricCard
+                    title="Monthly expenses"
+                    amount={analysis.latestMonth.expenses}
+                    icon={Wallet}
+                    tone="orange"
+                    description={analysis.latestMonth.label}
+                    expense
+                  />
+
+                  <MetricCard
+                    title="Monthly profit"
+                    amount={analysis.latestMonth.profit}
+                    icon={TrendingUp}
+                    tone="green"
+                    description="Revenue minus expenses"
+                    negative={analysis.latestMonth.profit < 0}
+                  />
+                </div>
+
+                <div className="ai-disclaimer">
+                  <CalendarDays size={14} />
+                  Your records currently contain transactions for{" "}
+                  {analysis.latestMonth.label} only. Add or import records
+                  from another month to compare monthly performance.
+                </div>
+              </>
+            ) : (
+              <div className="empty-state">
+                <CalendarDays size={25} />
+
+                <strong>No dated monthly records available</strong>
+
+                <span>
+                  Add transactions with valid dates or import a CSV
+                  containing valid transaction dates. Your overall financial
+                  totals can still include transactions that cannot be
+                  grouped into a month.
+                </span>
+              </div>
+            )}
+          </section>
+
+
+          {/* FINANCIAL INSIGHTS */}
           <section className="insights-section">
             <div className="section-heading">
               <div>
                 <div className="section-title-row">
                   <Sparkles size={19} className="sparkle-icon" />
+
                   <h2>Financial insights</h2>
+
                   <span className="powered-badge">RULE-BASED</span>
                 </div>
-      
-                <p>What your current numbers reveal about your business</p>
+
+                <p>
+                  What your current numbers reveal about your business
+                </p>
               </div>
             </div>
-      
-            <div className="secondary-insights">
-              {analysis.insights.map((insight, index) => (
-                <InsightCard
-                  key={insight.id}
-                  icon={
-                    index === 0
-                      ? TrendingUp
-                      : index === 1
-                        ? Wallet
-                        : Lightbulb
-                  }
-                  type={insight.type.replace(/_/g, " ")}
-                  title={insight.title}
-                  description={insight.description}
-                  tone={
-                    insight.type === "positive"
-                      ? "green"
-                      : insight.type === "warning" ||
-                          insight.type === "negative"
-                        ? "orange"
-                        : index % 2 === 0
-                          ? "purple"
-                          : "blue"
-                  }
-                />
-              ))}
-            </div>
+
+            {analysis.insights.length > 0 ? (
+              <div className="secondary-insights">
+                {analysis.insights.map((insight, index) => (
+                  <InsightCard
+                    key={insight.id}
+                    icon={
+                      index === 0
+                        ? TrendingUp
+                        : index === 1
+                          ? Wallet
+                          : Lightbulb
+                    }
+                    type={insight.type.replace(/_/g, " ")}
+                    title={insight.title}
+                    description={insight.description}
+                    tone={
+                      insight.type === "positive"
+                        ? "green"
+                        : insight.type === "warning" ||
+                            insight.type === "negative"
+                          ? "orange"
+                          : index % 2 === 0
+                            ? "purple"
+                            : "blue"
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <Lightbulb size={25} />
+
+                <strong>No financial insights yet</strong>
+
+                <span>
+                  Add or import transactions to generate insights about your
+                  business finances.
+                </span>
+              </div>
+            )}
           </section>
-            
+
+          <div className="ai-disclaimer">
+            <Sparkles size={14} />
+
+            Financial figures and insights are based on the transaction
+            records available in your workspace. They may not reflect taxes,
+            unpaid invoices, inventory adjustments, or other unrecorded costs.
+          </div>
+        </>
+      )}
+
+      {/* AI RECOMMENDATIONS PAGE */}
+      {isInsights && (
+        <>
           <section className="panel secondary-panel">
             <div className="panel-heading">
               <div>
                 <h2>Recommended actions</h2>
-                <p>Practical next steps based on your financial records</p>
+
+                  <span className="powered-badge">
+                    {usingAI ? "GROQ AI" : "RULE-BASED"}
+                  </span>
+
+                <p>
+                  Practical next steps based on your financial records
+                </p>
               </div>
-            
+
               <Lightbulb size={21} />
             </div>
-            
-            {analysis.recommendations.length > 0 ? (
+
+            {aiLoading && (
+                <div className="ai-disclaimer">
+                  <Sparkles size={14} />
+                  Groq AI is analyzing your financial summary...
+                </div>
+              )}
+
+              
+{aiError && (
+  <div className="ai-disclaimer">
+    <Lightbulb size={14} />
+    {aiRecommendations.length > 0
+      ? "AI could not refresh the recommendations. Your last successful AI recommendations are still displayed."
+      : "AI is temporarily unavailable. Showing your rule-based recommendations instead."}
+  </div>
+)}
+
+
+            {recommendationsToShow.length > 0 ? (
               <div className="secondary-insights">
-                {analysis.recommendations.map((recommendation) => (
+                {recommendationsToShow.map((recommendation) => (
                   <InsightCard
                     key={recommendation.id}
                     icon={Lightbulb}
@@ -1958,23 +2329,88 @@ function SecondaryPage({
                 ))}
               </div>
             ) : (
-              <p>
-                Add or import transactions to receive recommendations based on
-                your financial activity.
-              </p>
+              <div className="empty-state">
+                <Lightbulb size={25} />
+
+                <strong>No recommendations yet</strong>
+
+                <span>
+                  Add or import transactions to receive recommendations based
+                  on your financial activity.
+                </span>
+
+                <button
+                  className="button-primary"
+                  onClick={() => onNavigate("Transactions")}
+                >
+                  <ReceiptText size={16} />
+                  View transactions
+                </button>
+              </div>
             )}
+          </section>
+
+          <section className="panel secondary-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Current financial position</h2>
+
+                <p>A quick summary of your recorded business activity</p>
+              </div>
+
+              <ChartNoAxesCombined size={21} />
+            </div>
+
+            <div className="metrics-grid secondary-metrics">
+              <MetricCard
+                title="Revenue"
+                amount={analysis.revenue}
+                icon={Banknote}
+                tone="blue"
+                description="Total recorded income"
+              />
+
+              <MetricCard
+                title="Expenses"
+                amount={analysis.expenses}
+                icon={Wallet}
+                tone="orange"
+                description="Total recorded expenses"
+                expense
+              />
+
+              <MetricCard
+                title="Estimated profit"
+                amount={analysis.profit}
+                icon={TrendingUp}
+                tone="green"
+                description="Revenue minus expenses"
+                negative={analysis.profit < 0}
+              />
+            </div>
 
             <div className="ai-disclaimer">
-              <Sparkles size={14} />
-              These recommendations are generated by predefined financial rules,
-              not a connected AI model. Review your records before making
-              business decisions.
-            </div>
+                <Sparkles size={14} />
+                        
+              {usingAI
+              ? "These recommendations were generated by GROQ AI using your financial summary. Review them carefully before making business decisions."
+              : "These recommendations are generated locally from predefined financial rules. No external AI service is required."}
+              </div>
+
+
+            <button
+              className="button-secondary"
+              onClick={() => onNavigate("Financial insights")}
+            >
+              <ChartNoAxesCombined size={16} />
+              View financial insights
+            </button>
           </section>
         </>
+      )}
 
-          
-      ) : isSettings ? (
+      {/* SETTINGS PAGE */}
+      {isSettings && (
         <div className="panel settings-panel">
           <h2>Workspace preferences</h2>
 
@@ -2043,61 +2479,69 @@ function SecondaryPage({
             </button>
           </div>
         </div>
-      ) : (
-        <div className="panel secondary-overview">
-          <h2>Financial insights</h2>
-
-          <div className="metrics-grid secondary-metrics">
-            <MetricCard
-              title="Total revenue"
-              amount={financials.income}
-              icon={Banknote}
-              tone="blue"
-              description="Recorded income"
-            />
-
-            <MetricCard
-              title="Total expenses"
-              amount={financials.expenses}
-              icon={Wallet}
-              tone="orange"
-              description="Recorded expenses"
-              expense
-            />
-
-            <MetricCard
-              title="Estimated profit"
-              amount={financials.profit}
-              icon={TrendingUp}
-              tone="green"
-              description="Income minus expenses"
-              negative={financials.profit < 0}
-            />
-          </div>
-
-          <p>
-            Estimated profit is calculated as recorded income minus recorded
-            expenses. Profit margin is estimated profit divided by revenue,
-            multiplied by 100.
-          </p>
-
-          <p>
-            These calculations depend on the records provided. Missing
-            transactions, unpaid invoices, taxes, inventory accounting and
-            other adjustments can affect actual business profitability.
-          </p>
-
-          <button
-            className="button-primary"
-            onClick={() => onNavigate("Overview")}
-          >
-            <LayoutDashboard size={16} />
-            Back to overview
-          </button>
-        </div>
       )}
+
+      {/* FALLBACK PAGE */}
+      {!isTransactions &&
+        !isFinancialInsights &&
+        !isInsights &&
+        !isSettings && (
+          <div className="panel secondary-overview">
+            <h2>Financial overview</h2>
+
+            <div className="metrics-grid secondary-metrics">
+              <MetricCard
+                title="Total revenue"
+                amount={financials.income}
+                icon={Banknote}
+                tone="blue"
+                description="Recorded income"
+              />
+
+              <MetricCard
+                title="Total expenses"
+                amount={financials.expenses}
+                icon={Wallet}
+                tone="orange"
+                description="Recorded expenses"
+                expense
+              />
+
+              <MetricCard
+                title="Estimated profit"
+                amount={financials.profit}
+                icon={TrendingUp}
+                tone="green"
+                description="Income minus expenses"
+                negative={financials.profit < 0}
+              />
+            </div>
+
+            <p>
+              Estimated profit is calculated as recorded income minus recorded
+              expenses. Profit margin is estimated profit divided by revenue,
+              multiplied by 100.
+            </p>
+
+            <p>
+              These calculations depend on the records provided. Missing
+              transactions, unpaid invoices, taxes, inventory accounting, and
+              other adjustments can affect actual business profitability.
+            </p>
+
+            <button
+              className="button-primary"
+              onClick={() => onNavigate("Overview")}
+            >
+              <LayoutDashboard size={16} />
+              Back to overview
+            </button>
+          </div>
+        )}
     </section>
   );
 }
+
+
 
 export default App;
