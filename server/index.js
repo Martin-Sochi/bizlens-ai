@@ -9,9 +9,21 @@ dotenv.config({ path: "server/.env" });
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Origin not allowed by CORS"));
+    },
   })
 );
 
@@ -424,7 +436,7 @@ app.post("/api/ai-recommendations", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`BizLens AI backend running at http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`BizLens AI backend listening on port ${PORT}`);
   console.log(`Groq configured: ${Boolean(ai)}`);
 });
