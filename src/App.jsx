@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import { analyzeFinancials } from "./financialInsights";
+import { createPortal } from "react-dom";
 
 
 import {
@@ -31,6 +32,7 @@ import {
   RefreshCw,
   AlertCircle,
   CheckCircle2,
+  FileText,
 } from "lucide-react";
 
 import {
@@ -274,6 +276,11 @@ const [aiRecommendationsKey, setAiRecommendationsKey] = useState("");
 const [aiLoading, setAiLoading] = useState(false);
 const [aiError, setAiError] = useState("");
 const [aiSource, setAiSource] = useState("");
+
+//working on need a help tab
+const [showHelpModal, setShowHelpModal] = useState(false);
+
+const [showReport, setShowReport] = useState(false);
 
   const [form, setForm] = useState({
     description: "",
@@ -596,6 +603,12 @@ const salesData = useMemo(() => {
   return chartData;
 }, [filteredPeriodTransactions, transactions, period]);
 
+const reportRecommendations =
+  aiRecommendations.length > 0
+    ? aiRecommendations
+    : analysis.recommendations || [];
+
+const reportUsingAI = aiRecommendations.length > 0 && aiSource === "groq";
 
 
   const navigateTo = (page) => {
@@ -937,7 +950,15 @@ const handleTypeChange = (event) => {
         </nav>
 
         <div className="sidebar-bottom">
-          <div className="help-card">
+          <div className="help-card clickable-help-card" onClick={() => setShowHelpModal(true)}
+          onKeyDown={(event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setShowHelpModal(true);
+    }
+  }}
+            role= "button"
+            tabIndex={0}>
             <div className="help-icon">
               <CircleHelp size={19} />
             </div>
@@ -1066,6 +1087,8 @@ const handleTypeChange = (event) => {
               onUpload={handleCSVUpload}
               csvInputKey={csvInputKey}
               onDelete={handleDeleteTransaction}
+              onReport={()=> setShowReport(true)}
+
             />
           ) : (
             <SecondaryPage
@@ -1099,6 +1122,22 @@ const handleTypeChange = (event) => {
               onClose={() => setShowTransactionForm(false)}
             />
           )}
+
+          {showHelpModal && (
+            <HelpModal onClose= {() => setShowHelpModal(false)} />
+          )}
+
+          {showReport && (
+  <ReportModal
+    period={period}
+    financials={financials}
+    analysis={analysis}
+    transactions={filteredPeriodTransactions}
+    recommendations={reportRecommendations}
+    usingAI={reportUsingAI}
+    onClose={() => setShowReport(false)}
+  />
+)}
 
           <footer className="page-footer">
             <span>© 2026 BizLens AI</span>
@@ -1265,6 +1304,319 @@ function TransactionModal({
   );
 }
 
+function HelpModal({ onClose }) {
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="transaction-modal help-explanation-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="help-modal-title"
+      >
+        <div className="modal-heading">
+          <div>
+            <div className="eyebrow">
+              <span className="eyebrow-dot" />
+              BIZLENS GUIDE
+            </div>
+            <h2 id="help-modal-title">What is BizLens AI?</h2>
+            <p>Your intelligent business companion for financial clarity.</p>
+          </div>
+
+          <button
+            className="icon-button"
+            onClick={onClose}
+            aria-label="Close help guide"
+          >
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="help-content-body">
+          <div className="help-feature-item">
+            <strong>📊 Live Financial Overview</strong>
+            <p>Track your total income, expenses, and net profit dynamically over custom date periods like the last 7 days, 30 days, or months.</p>
+          </div>
+
+          <div className="help-feature-item">
+            <strong>🤖 AI-Powered Recommendations</strong>
+            <p>BizLens analyzes your expense patterns and profit margins to give you tailored insights and smart business advice.</p>
+          </div>
+
+          <div className="help-feature-item">
+            <strong>📁 Easy Transaction Management</strong>
+            <p>Add cash inflows or outflows manually, or seamlessly import and export your business records using CSV files.</p>
+          </div>
+
+          <div className="help-feature-item">
+            <strong>🔒 Local & Secure</strong>
+            <p>All your records are saved directly in your browser's local storage—keeping your financial data private on your device.</p>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button
+            type="button"
+            className="button-primary"
+            onClick={onClose}
+            style={{ width: "100%" }}
+          >
+            Got it, thanks!
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReportModal({
+  period,
+  financials,
+  analysis,
+  transactions,
+  recommendations,
+  usingAI,
+  onClose,
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const generatedOn = new Date().toLocaleDateString("en-NG", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+
+  const categories = [...(analysis.expenseCategories || [])]
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 6);
+
+  const recentTransactions = [...transactions]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 10);
+
+  const insights = (analysis.insights || []).slice(0, 4);
+  const actions = (recommendations || []).slice(0, 5);
+
+  return createPortal(
+    <div
+      className="report-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="report-toolbar no-print">
+        <button className="button-secondary" onClick={onClose}>
+          <X size={16} />
+          Close
+        </button>
+
+        <button className="button-primary" onClick={() => window.print()}>
+          <Download size={16} />
+          Save as PDF / Print
+        </button>
+      </div>
+
+      <article
+        className="report-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-title"
+      >
+        <header className="report-header">
+          <div>
+            <div className="report-brand">
+              <ChartNoAxesCombined size={21} strokeWidth={2.5} />
+              BizLens AI
+            </div>
+            <h1 id="report-title">Business Financial Summary</h1>
+          </div>
+
+          <div className="report-meta">
+            <span>
+              Business: <strong>Sample Merchant</strong>
+            </span>
+            <span>
+              Period: <strong>{period}</strong>
+            </span>
+            <span>
+              Generated: <strong>{generatedOn}</strong>
+            </span>
+          </div>
+        </header>
+
+        <section className="report-summary">
+          <div className="report-stat">
+            <span>Total revenue</span>
+            <strong>{formatMoney(financials.income)}</strong>
+          </div>
+
+          <div className="report-stat">
+            <span>Total expenses</span>
+            <strong>{formatMoney(financials.expenses)}</strong>
+          </div>
+
+          <div className="report-stat">
+            <span>Estimated profit</span>
+            <strong
+              className={
+                financials.profit >= 0 ? "report-positive" : "report-negative"
+              }
+            >
+              {formatMoney(financials.profit)}
+            </strong>
+          </div>
+
+          <div className="report-stat">
+            <span>Profit margin</span>
+            <strong
+              className={
+                financials.margin >= 0 ? "report-positive" : "report-negative"
+              }
+            >
+              {financials.margin.toFixed(1)}%
+            </strong>
+          </div>
+        </section>
+
+        <section className="report-section">
+          <h2>Expense breakdown</h2>
+
+          {categories.length > 0 ? (
+            categories.map((item) => {
+              const share =
+                analysis.expenses > 0
+                  ? (item.amount / analysis.expenses) * 100
+                  : 0;
+
+              return (
+                <div className="report-category-row" key={item.category}>
+                  <span>{item.category}</span>
+                  <strong>
+                    {formatMoney(item.amount)} · {share.toFixed(0)}%
+                  </strong>
+                  <div className="report-bar">
+                    <i style={{ width: `${Math.min(share, 100)}%` }} />
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <p className="report-empty">
+              No expenses were recorded in this period.
+            </p>
+          )}
+        </section>
+
+        <section className="report-section">
+          <h2>Key insights</h2>
+
+          {insights.length > 0 ? (
+            insights.map((insight) => (
+              <div className="report-item" key={insight.id}>
+                <div className="report-item-top">
+                  <strong>{insight.title}</strong>
+                  <span className="report-tag">
+                    {String(insight.type || "").replace(/_/g, " ")}
+                  </span>
+                </div>
+                <p>{insight.description}</p>
+              </div>
+            ))
+          ) : (
+            <p className="report-empty">
+              No insights are available for this period.
+            </p>
+          )}
+        </section>
+
+        <section className="report-section">
+          <h2>Recommended actions</h2>
+
+          {actions.length > 0 ? (
+            actions.map((item) => (
+              <div className="report-item" key={item.id}>
+                <div className="report-item-top">
+                  <strong>{item.title}</strong>
+                  <span className="report-tag">{item.priority} priority</span>
+                </div>
+                <p>
+                  {item.description} {item.action}
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="report-empty">
+              No recommendations are available for this period.
+            </p>
+          )}
+        </section>
+
+        <section className="report-section">
+          <h2>Recent transactions</h2>
+
+          {recentTransactions.length > 0 ? (
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Category</th>
+                  <th className="report-amount">Amount</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {recentTransactions.map((transaction) => (
+                  <tr key={transaction.id}>
+                    <td>{formatDate(transaction.date)}</td>
+                    <td>{transaction.description}</td>
+                    <td>{transaction.category}</td>
+                    <td
+                      className={`report-amount ${
+                        transaction.type === "income"
+                          ? "report-income"
+                          : "report-expense"
+                      }`}
+                    >
+                      {transaction.type === "income" ? "+" : "−"}
+                      {formatMoney(transaction.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="report-empty">
+              No transactions were recorded in this period.
+            </p>
+          )}
+        </section>
+
+        <footer className="report-footnote">
+          Recommendations source:{" "}
+          {usingAI ? "AI-generated (Groq)" : "rule-based analysis"}. All figures
+          are calculated from the transactions recorded in this workspace for
+          the selected period and may not reflect taxes, unpaid invoices,
+          inventory adjustments, or other unrecorded costs.
+        </footer>
+      </article>
+    </div>,
+    document.body
+  );
+}
+
 function Overview({
   period,
   setPeriod,
@@ -1281,6 +1633,7 @@ function Overview({
   onUpload,
   csvInputKey,
   onDelete,
+  onReport,
 }) {
   const profitIsPositive = financials.profit >= 0;
 
@@ -1315,6 +1668,15 @@ function Overview({
               hidden
             />
           </label>
+
+          <button
+  className="button-secondary"
+  onClick={onReport}
+  disabled={transactions.length === 0}
+>
+  <FileText size={16} />
+  Report
+</button>
 
           <button className="button-secondary" onClick={onExportSample}>
             <Download size={16} />
