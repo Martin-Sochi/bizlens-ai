@@ -9,9 +9,12 @@ dotenv.config({ path: "server/.env" });
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "https://bizlens-ai-taupe.vercel.app",
+  "https://bizlens-p7ksszuke-martin-sochi.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
